@@ -65,7 +65,8 @@ Blend the predictions together!
 
 ```python
 for group, mask in merge_masks(results):
-    cv2.drawContours(frame, [group], -1, (0, 255, 0), 2)
+    # group contains the indices of the masks that were merged
+    # mask is the blended mask
 ```
 
 # For Development
