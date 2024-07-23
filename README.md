@@ -8,7 +8,7 @@ Agnostic ensemble algorithm for instance segmentation tasks
 
 | Blended Ensemble |
 | --- |
-| <img src="/graphics/blended.png" width="500" /> |
+| <img src="/graphics/blended.jpg" width="500" /> |
 
 
 
