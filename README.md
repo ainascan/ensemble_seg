@@ -64,6 +64,8 @@ for image in [frame] + augmented:
 Blend the predictions together!
 
 ```python
+from ensemble_seg import merge_masks
+
 for group, mask in merge_masks(results):
     # group contains the indices of the masks that were merged
     # mask is the blended mask
