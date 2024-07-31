@@ -23,6 +23,8 @@ This `ensemble_seg` codebase provides a simple, model agnostic interface to blen
 
 # How to Use
 
+See the `example` directory with a full example notebook reading contours from a coco dataset and blending them together.
+
 ## Install
 
 ```bash
