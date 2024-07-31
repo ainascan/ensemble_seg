@@ -5,7 +5,6 @@ import cv2
 from typing import Iterator
 
 
-# calculate the IOU between two masks
 @nb.njit
 def mask_iou(mask1, mask2):
     intersection = np.logical_and(mask1, mask2).sum()
@@ -29,7 +28,23 @@ def bbox_iou(bbox1, bbox2):
     return intersection / union
 
 
-@nb.njit
+def mask_areas_are_close(mask1, mask2, area_diff_percent=0.1):
+    # get total pixels that are greater than 0
+    area1 = len(mask1[mask1 > 0])
+    area2 = len(mask2[mask2 > 0])
+    # area1 = mask1.sum()
+    # area2 = mask2.sum()
+    area_diff = abs(area1 - area2)
+    return area_diff < area_diff_percent * min(area1, area2)
+
+
+def bbox_areas_are_close(bbox1, bbox2, area_diff_percent=0.1):
+    area1 = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
+    area2 = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
+    area_diff = abs(area1 - area2)
+    return area_diff < area_diff_percent * min(area1, area2)
+
+
 def get_overlap_graph(
     instances: list[dict],
     iou_threshold: float = 0.8,
@@ -76,16 +91,10 @@ def get_overlap_graph(
                 raise ValueError(f"Unknown iou method: {iou_method}. Must be 'mask' or 'bbox'")
 
             if area_method == 'mask':
-                area1 = in1['mask'].sum()
-                area2 = in2['mask'].sum()
-                area_diff = abs(area1 - area2)
-                areas_are_close = area_diff < area_diff_percent * min(area1, area2)
+                areas_are_close = mask_areas_are_close(in1['mask'], in2['mask'], area_diff_percent=area_diff_percent)
 
             elif area_method == 'bbox':
-                area1 = (in1['bbox'][2] - in1['bbox'][0]) * (in1['bbox'][3] - in1['bbox'][1])
-                area2 = (in2['bbox'][2] - in2['bbox'][0]) * (in2['bbox'][3] - in2['bbox'][1])
-                area_diff = abs(area1 - area2)
-                areas_are_close = area_diff < area_diff_percent * min(area1, area2)
+                areas_are_close = bbox_areas_are_close(in1['bbox'], in2['bbox'], area_diff_percent=area_diff_percent)
 
             else:
                 raise ValueError(f"Unknown area method: {area_method}. Must be 'mask' or 'bbox'")
@@ -96,14 +105,13 @@ def get_overlap_graph(
     return graph
 
 
-@nb.njit
 def merge_overlaps(graph: dict) -> set[tuple]:
     """
     Using an adjacency list graph object, groups all overlapping nodes and edges. Example:
     
     ```
-        graph = {0: [], 1: [0], 2: [], 3: [0, 1], 4: [2]}
-        overlaps = [(0, 1, 3), (2, 4)]
+        graph = {0: [], 1: [0], 2: [], 3: [0, 1], 4: [2], 5: []}
+        overlaps = [(0, 1, 3), (2, 4), (5)]
     ```
     
     Args:
@@ -116,8 +124,8 @@ def merge_overlaps(graph: dict) -> set[tuple]:
     
     for i in graph:
 
-        if len(graph[i]) == 0:
-            continue
+        #if len(graph[i]) == 0:
+        #    continue
 
         visited = set()
         visited.add(i)
@@ -132,28 +140,47 @@ def merge_overlaps(graph: dict) -> set[tuple]:
                 visited.update(graph[j])
                 visited.add(j)
 
-        if len(visited) > 0:
-            grouped.add(tuple(sorted(visited)))
+        #if len(visited) > 0:
+        grouped.add(tuple(sorted(visited)))
             
     return grouped
 
 
-def blend_masks(masks: list[np.ndarray], blur_kernel=(21, 21)) -> np.ndarray:
+def blend_masks(
+    instances: list[dict],
+    blur_kernel=(21, 21),
+    weight_method='confidence',
+) -> np.ndarray:
     """Given a list of masks, blends them together with equal weight into a single mask.
 
     Args:
         masks (list[np.ndarray]): a list of masks to blend
         blur_kernel (tuple[int], optional): kernel to use when bluring masks together. Defaults to (21, 21).
+        weight_method (str, optional): method to determine the weight of each mask: 'confidence' or 'equal'. Defaults to 'confidence'.
 
     Returns:
         np.ndarray: a single blended binary mask
     """
+    masks = []
+    for instance in instances:
+        mask = instance['mask']
+        # ensure mask is binary
+        mask[mask > 0] = 255
+        masks.append(mask)
+
     blended = np.zeros_like(masks[0])
     blended = cv2.cvtColor(blended, cv2.COLOR_GRAY2BGR)
 
-    for mask in masks:
-        mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-        blended = cv2.addWeighted(blended, 1, mask, 0.5, 0)
+    for i, instance in enumerate(instances):
+        mask = cv2.cvtColor(masks[i], cv2.COLOR_GRAY2BGR)
+        
+        weight = 0.5
+        if weight_method == 'confidence':
+            weight = instance['confidence']
+        elif weight_method == 'equal':
+            weight = 0.5
+        
+        blended = cv2.addWeighted(blended, 1, mask, weight, 0)
 
     # add small blur to smooth out the edges
     blended = cv2.blur(blended, blur_kernel)
@@ -170,6 +197,8 @@ def merge_masks(
     instances: list[dict],
     iou_threshold: float = 0.8,
     area_diff_percent: float = 0.1,
+    blur_kernel: tuple[int] = (21, 21),
+    weight_method: str = 'confidence',
     iou_method: str = 'mask',
     area_method: str = 'mask',
 ) -> Iterator[tuple[list[int], np.ndarray]]:
@@ -180,12 +209,15 @@ def merge_masks(
             {
                 'mask': np.ndarray, # binary mask
                 'bbox': tuple[int], # bounding box (x1, y1, x2, y2)
+                'confidence': float, # confidence of the instance
             }
 
         iou_threshold (float, optional): threshold of IOU. Defaults to 0.8.
         area_diff_percent (float, optional): percent of different between areas. Defaults to 0.1.
-        iou_method (str, optional): method to compare IOU's. Defaults to 'mask'.
-        area_method (str, optional): method to compare areas. Defaults to 'mask'.
+        blur_kernel (tuple[int], optional): kernel to use when bluring masks together. Defaults to (21, 21).
+        iou_method (str, optional): method to compare IOU's: 'bbox' or 'mask'. Defaults to 'mask'.
+        weight_method (str, optional): method to determine the weight of each mask: 'confidence' or 'equal'. Defaults to 'confidence'.
+        area_method (str, optional): method to compare areas: 'bbox' or 'mask'. Defaults to 'mask'.
 
     Yields:
         Iterator[tuple[list[int], np.ndarray]]: the list of instance indices that were merged and the blended mask
@@ -202,14 +234,9 @@ def merge_masks(
     grouped = merge_overlaps(graph)
     
     for group in grouped:        
-        masks = []
-
-        for i in group:
-            mask = instances[i]['mask']
-            # ensure mask is binary
-            mask[mask > 0] = 255
-            masks.append(mask)
+        
+        instance_group = [instances[i] for i in group]
             
-        blended = blend_masks(masks)
+        blended = blend_masks(instance_group, blur_kernel=blur_kernel, weight_method=weight_method)
         
         yield group, blended
