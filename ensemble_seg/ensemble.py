@@ -2,7 +2,7 @@ import numpy as np
 import numba as nb
 import cv2
 
-from typing import Iterator
+from typing import Iterator, List, Set, Tuple
 
 
 @nb.njit
@@ -46,7 +46,7 @@ def bbox_areas_are_close(bbox1, bbox2, area_diff_percent=0.1):
 
 
 def get_overlap_graph(
-    instances: list[dict],
+    instances: List[dict],
     iou_threshold: float = 0.8,
     area_diff_percent: float = 0.1,
     iou_method: str = 'mask',
@@ -105,7 +105,7 @@ def get_overlap_graph(
     return graph
 
 
-def merge_overlaps(graph: dict) -> set[tuple]:
+def merge_overlaps(graph: dict) -> Set[tuple]:
     """
     Using an adjacency list graph object, groups all overlapping nodes and edges. Example:
     
@@ -147,7 +147,7 @@ def merge_overlaps(graph: dict) -> set[tuple]:
 
 
 def blend_masks(
-    instances: list[dict],
+    instances: List[dict],
     blur_kernel=(21, 21),
     weight_method='confidence',
 ) -> np.ndarray:
@@ -194,14 +194,14 @@ def blend_masks(
 
 
 def merge_masks(
-    instances: list[dict],
+    instances: List[dict],
     iou_threshold: float = 0.8,
     area_diff_percent: float = 0.1,
-    blur_kernel: tuple[int] = (21, 21),
+    blur_kernel: Tuple[int] = (21, 21),
     weight_method: str = 'confidence',
     iou_method: str = 'mask',
     area_method: str = 'mask',
-) -> Iterator[tuple[list[int], np.ndarray]]:
+) -> Iterator[Tuple[List[int], np.ndarray]]:
     """Merges overlapping instances into a single instance with a blended mask.
 
     Args:
